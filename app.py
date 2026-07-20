@@ -433,7 +433,12 @@ def prepare_regression_points(summary: pd.DataFrame, settings: dict[str, Any]) -
         used_units = set(points.loc[points["included"], "concentration_unit"].dropna())
         si_units = set(CONCENTRATION_TO_M)
         target = settings["concentration_x_unit"]
-        if used_units and used_units.issubset(si_units):
+        if not used_units:
+            # All concentration values are still blank. This is a missing-input
+            # state, not a mixed-unit error.
+            points["x"] = np.nan
+            x_unit = target
+        elif used_units.issubset(si_units):
             points["x"] = [
                 convert_concentration(float(value), unit, target)
                 if pd.notna(value) and unit in si_units
@@ -551,7 +556,7 @@ def run_full_analysis(settings: dict[str, Any]) -> dict[str, Any]:
             )
         except ValueError as error:
             warnings.append(str(error))
-    elif not points.empty:
+    elif not points.empty and not included.empty:
         warnings.append("Regression requires at least two included points with distinct x values.")
     if not points.empty:
         analysis_figure = create_analysis_figure(points, fit_points, regression_result, settings, x_variable, x_unit, y_unit)

@@ -108,3 +108,23 @@ def test_app_without_peak_window_keeps_cv_plot_and_shows_warning(par_bytes: byte
     assert outputs["summary"].empty
     assert not outputs["processed"].empty
     assert any("peak-search potential window" in warning for warning in outputs["warnings"])
+
+
+def test_blank_concentrations_do_not_raise_false_mixed_unit_warning(par_bytes: bytes) -> None:
+    parsed = parse_par_bytes(par_bytes, "sample.par")
+    parsed.raw_data = annotate_cycles(parsed.raw_data, parsed.metadata)
+    app = AppTest.from_file("app.py")
+    app.session_state["parsed_files"] = {parsed.file_id: parsed}
+    app.session_state["file_inputs"] = {
+        parsed.file_id: asdict(FileInput(scan_rate_V_s=0.05))
+    }
+    app.session_state["analysis_mode"] = "Concentration series"
+    app.run(timeout=30)
+    app.number_input(key="anodic_start").set_value(0.0)
+    app.number_input(key="anodic_end").set_value(0.3)
+    next(button for button in app.button if button.label == "Run analysis").click().run(timeout=30)
+    assert not app.exception
+    warnings = app.session_state["analysis_outputs"]["warnings"]
+    assert any("Enter a concentration" in warning for warning in warnings)
+    assert not any("cannot be mixed" in warning for warning in warnings)
+    assert not any("distinct x values" in warning for warning in warnings)
