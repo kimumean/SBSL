@@ -1,12 +1,10 @@
-"""CSV, JSON, Plotly HTML, and combined ZIP exports."""
+"""CSV, Plotly HTML, and combined ZIP exports."""
 
 from __future__ import annotations
 
 import io
-import json
 import zipfile
 from dataclasses import asdict
-from typing import Any
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -103,18 +101,6 @@ def regression_csv(result: RegressionResult | None) -> bytes:
     return regression_frame(result).to_csv(index=False).encode("utf-8-sig")
 
 
-def settings_json(settings: dict[str, Any]) -> bytes:
-    return json.dumps(settings, ensure_ascii=False, indent=2, default=_json_default).encode("utf-8")
-
-
-def _json_default(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
-    if isinstance(value, set):
-        return sorted(value)
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
-
-
 def figure_html(figure: go.Figure | None) -> bytes:
     if figure is None:
         return b"<!doctype html><html><body><p>No plot was generated.</p></body></html>"
@@ -127,7 +113,6 @@ def analysis_zip(
     regression: RegressionResult | None,
     cv_figure: go.Figure | None,
     analysis_figure: go.Figure | None,
-    settings: dict[str, Any],
 ) -> bytes:
     """Create the complete downloadable analysis package in memory."""
 
@@ -138,5 +123,4 @@ def analysis_zip(
         archive.writestr("regression_results.csv", regression_csv(regression))
         archive.writestr("cv_overlay.html", figure_html(cv_figure))
         archive.writestr("calibration_plot.html", figure_html(analysis_figure))
-        archive.writestr("analysis_settings.json", settings_json(settings))
     return buffer.getvalue()

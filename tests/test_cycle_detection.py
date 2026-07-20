@@ -48,3 +48,17 @@ def test_repeated_switch_point_is_not_a_false_cycle() -> None:
     )
     detected = annotate_cycles(data)
     assert detected["cycle_number"].max() == 1
+
+
+def test_internal_segment_numbers_and_applied_potential_define_cycles() -> None:
+    data = pd.DataFrame(
+        {
+            "potential_V": [0.0, 0.11, 0.19, 0.1, 0.0, 0.001, 0.09, 0.21, 0.11, 0.0],
+            "e_applied_V": [0.0, 0.1, 0.2, 0.1, 0.0, 0.0, 0.1, 0.2, 0.1, 0.0],
+            "current_A": np.arange(10, dtype=float),
+            "segment_number": [0] * 5 + [1] * 5,
+        }
+    )
+    detected = annotate_cycles(data, {"Cycles": 2})
+    assert detected["cycle_number"].max() == 2
+    assert set(detected["sweep_direction"]) == {"anodic", "cathodic"}

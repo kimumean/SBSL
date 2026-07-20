@@ -35,7 +35,15 @@ def _stable_direction(values: np.ndarray) -> np.ndarray:
 def _segment_directions(frame: pd.DataFrame) -> pd.Series:
     result = pd.Series("unknown", index=frame.index, dtype="object")
     for _, group in frame.groupby("segment_number", sort=False):
-        potential = group["potential_V"].to_numpy(dtype=float)
+        # E Applied is normally monotonic within each sweep and avoids treating
+        # measurement noise in E(V) as dozens of false turning points. E(V)
+        # remains the measured potential used for all electrochemical analysis.
+        direction_column = "potential_V"
+        if "e_applied_V" in group:
+            applied = pd.to_numeric(group["e_applied_V"], errors="coerce")
+            if applied.notna().mean() >= 0.8 and float(applied.max() - applied.min()) > 1e-12:
+                direction_column = "e_applied_V"
+        potential = pd.to_numeric(group[direction_column], errors="coerce").to_numpy(dtype=float)
         point_directions = _stable_direction(potential)
         non_hold = point_directions[point_directions != "hold"]
         if len(non_hold):

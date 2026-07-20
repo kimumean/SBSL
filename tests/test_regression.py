@@ -64,7 +64,7 @@ def test_summary_csv_is_utf8_sig() -> None:
 
 
 def test_integrated_zip_contains_required_files() -> None:
-    payload = analysis_zip(None, None, None, None, None, {"mode": "test"})
+    payload = analysis_zip(None, None, None, None, None)
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         assert set(archive.namelist()) == {
             "summary.csv",
@@ -72,5 +72,4 @@ def test_integrated_zip_contains_required_files() -> None:
             "regression_results.csv",
             "cv_overlay.html",
             "calibration_plot.html",
-            "analysis_settings.json",
         }

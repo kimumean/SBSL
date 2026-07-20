@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from dataclasses import asdict
+from streamlit.testing.v1 import AppTest
 
 from core.cv_analysis import (
     concentration_base_value,
@@ -88,3 +90,21 @@ def test_new_file_does_not_overwrite_manual_session_input() -> None:
     preserve_file_input(stored, "first", FileInput(scan_rate_V_s=9.99))
     assert stored["first"]["concentration"] == 2.5
     assert stored["first"]["scan_rate_V_s"] == 0.05
+
+
+def test_app_without_peak_window_keeps_cv_plot_and_shows_warning(par_bytes: bytes) -> None:
+    parsed = parse_par_bytes(par_bytes, "sample.par")
+    parsed.raw_data = annotate_cycles(parsed.raw_data, parsed.metadata)
+    app = AppTest.from_file("app.py")
+    app.session_state["parsed_files"] = {parsed.file_id: parsed}
+    app.session_state["file_inputs"] = {
+        parsed.file_id: asdict(FileInput(concentration=1.0, scan_rate_V_s=0.05))
+    }
+    app.session_state["analysis_mode"] = "Concentration series"
+    app.run(timeout=30)
+    next(button for button in app.button if button.label == "Run analysis").click().run(timeout=30)
+    assert not app.exception
+    outputs = app.session_state["analysis_outputs"]
+    assert outputs["summary"].empty
+    assert not outputs["processed"].empty
+    assert any("peak-search potential window" in warning for warning in outputs["warnings"])

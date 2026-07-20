@@ -114,6 +114,11 @@ def _parse_segment(segment_number: int, body: str) -> tuple[pd.DataFrame, list[s
             definition_index = index
             definition = line.split("=", 1)[1]
             columns = _unique_columns(next(csv.reader([definition], skipinitialspace=True)))
+            # VersaStudio may append a literal numeric schema sentinel (usually
+            # ``0``) to Definition even though data records contain no matching
+            # field. It is structural metadata, not a data column.
+            if columns and re.fullmatch(r"[-+]?\d+(?:\.\d+)?", columns[-1]):
+                columns = columns[:-1]
             break
     if definition_index is None or not columns:
         return pd.DataFrame(), [f"Segment {segment_number}: missing Definition row."]
@@ -192,7 +197,14 @@ def _parse_segment(segment_number: int, body: str) -> tuple[pd.DataFrame, list[s
         if applied_col
         else pd.Series(float("nan"), index=frame.index)
     )
-    frame["segment_number"] = segment_number
+    # The Segment # field is the authoritative in-record segment identity.
+    # Some real multi-cycle files contain a single <Segment1> block while this
+    # field changes from 0 to 3 across cycles.
+    if source_segment_col and frame["source_segment_number"].notna().any():
+        frame["segment_number"] = frame["source_segment_number"].fillna(segment_number).astype(int)
+    else:
+        frame["segment_number"] = segment_number
+    frame["_segment_block_number"] = segment_number
     frame["_row_order"] = range(len(frame))
     return frame, warnings
 

@@ -8,11 +8,10 @@ VersaStudio에서 생성한 텍스트 기반 `.par` 파일을 브라우저에서
 - `Scan Rate (V/s)` 메타데이터 자동 파싱 및 수동 수정
 - 농도의 명시적 수동 입력(파일명이나 전류에서 자동 확정하지 않음)
 - segment 및 potential turning direction 기반 cycle/sweep 판별
-- Savitzky–Golay smoothing과 여러 baseline 방식
 - anodic/cathodic peak, fixed-potential 보간, interval mean, integrated charge
-- OLS/원점 통과 회귀, 95% 신뢰구간, replicate, blank correction
+- 기본 OLS calibration 및 scan-rate 회귀
 - Plotly CV overlay 및 calibration/scan-rate plot
-- UTF-8-SIG CSV, Plotly HTML, PNG/SVG, 설정 JSON, 통합 ZIP 다운로드
+- UTF-8-SIG CSV, Plotly HTML, PNG/SVG, 통합 ZIP 다운로드
 - 선택적 환경변수/Streamlit secrets 비밀번호 인증
 - 세션당 30개, 파일당 20 MB, 전체 200 MB 제한
 
@@ -59,11 +58,13 @@ cv_web_analyzer/
 
 손상된 행이나 E/I가 숫자가 아닌 행은 해당 행만 제외합니다. 제외 개수와 이유는 UI와 결과 경고에 남습니다. scientific notation을 지원합니다.
 
+실제 `dummy_data` VersaStudio 파일에서는 하나의 `<Segment1>` 블록 안에서 `Segment #`가 0–3으로 바뀌며 네 cycle을 나타냈고, `Definition=` 끝의 숫자 `0`은 실제 데이터 필드가 아닌 schema sentinel이었습니다. Parser는 이 sentinel을 제외하고 in-record `Segment #`를 우선 보존합니다. Sweep 방향 판별에는 noise가 있는 측정 `E(V)`보다 `E Applied(V)`를 우선 사용하지만, peak와 plot의 potential은 계속 측정값 `E(V)`를 사용합니다.
+
 ## 농도 입력 원칙
 
-농도는 `.par` 파일에 저장되어 있지 않으므로 업로드 직후 항상 비어 있습니다. `1mM.par`이나 `2.5mM.par` 같은 파일명은 `Filename hint`에 참고 정보로만 표시될 수 있으며 실제 `Concentration` 열에는 복사되지 않습니다. 사용자가 표에 값을 직접 입력하고 **Apply inputs**를 눌러야 합니다.
+농도는 `.par` 파일에 저장되어 있지 않으므로 업로드 직후 항상 비어 있습니다. `1mM.par`이나 `2.5mM.par` 같은 파일명에서도 농도를 추출하지 않습니다. 사용자가 표에 값을 직접 입력하고 **Apply inputs**를 눌러야 합니다.
 
-M, mM, µM, nM은 선택한 calibration x 단위로 변환됩니다. ppm 또는 Custom은 자동 환산되지 않으며 SI 단위와 섞으면 회귀에서 제외하고 경고합니다. 농도가 비어 있거나 음수/유효하지 않은 파일도 회귀에서 제외되지만 결과 CSV에는 남습니다. 0은 blank sample로 허용됩니다.
+M, mM, µM, nM은 내부적으로 calibration의 공통 mM 단위로 변환됩니다. ppm 또는 Custom은 자동 환산되지 않으며 SI 단위와 섞으면 회귀에서 제외하고 경고합니다. 농도가 비어 있거나 음수/유효하지 않은 파일도 회귀에서 제외되지만 결과 CSV에는 남습니다. 0 농도도 입력할 수 있습니다.
 
 ## cycle 및 sweep 판별
 
@@ -210,12 +211,6 @@ sudo certbot renew --dry-run
 
 > Uploaded files are processed for the active session and are not intentionally stored permanently.
 
-업로드는 메모리에서 처리되며 원본 `.par`을 database, 장기 server disk, 외부 API에 보내지 않습니다. 원시 CV 데이터는 앱 로그에 출력하지 않습니다. 설정 JSON과 분석 결과는 사용자가 브라우저 download로 가져갑니다.
+업로드는 메모리에서 처리되며 원본 `.par`을 database, 장기 server disk, 외부 API에 보내지 않습니다. 원시 CV 데이터는 앱 로그에 출력하지 않습니다. 분석 결과는 사용자가 브라우저 download로 가져갑니다.
 
 Streamlit `session_state`는 강한 보안 저장소가 아닙니다. 민감한 데이터 서비스에는 SSO/reverse-proxy 인증, TLS, 접속 통제, 사설 서버, 적절한 session timeout과 운영 로그 정책을 함께 적용하십시오.
-
-blank correction을 적용한 경우 summary에는 원 응답(`raw_response`), 사용한 blank(`blank_response`), 보정 응답(`blank_corrected_response`)이 함께 남습니다.
-
-## 설정 저장 및 복원
-
-**Settings JSON**은 분석 모드, 수동 농도/단위, 수정 scan rate, 사용 여부, cycle, smoothing, baseline, blank, regression, plot, 수동 제외를 저장합니다. 나중에 동일 `.par` 파일과 JSON을 업로드하고 **Apply restored settings**를 누르면 content hash를 우선해 파일을 연결하며, hash가 없으면 파일명을 fallback으로 사용합니다. 서버에는 설정을 영구 저장하지 않습니다.

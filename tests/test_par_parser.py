@@ -79,3 +79,19 @@ def test_global_metadata_excludes_segment_settings(par_bytes: bytes) -> None:
     text, _ = decode_par_bytes(par_bytes)
     metadata = extract_metadata(text)
     assert "Type" not in metadata
+
+
+def test_numeric_definition_sentinel_is_not_treated_as_data_column() -> None:
+    raw = b"""Cycles=1
+Scan Rate (V/s)=0.05
+Segments=1
+<Segment1>
+Definition=Segment #,Point #,E(V),I(A),Elapsed Time(s),E Applied(V),0
+0,0,0.0,1E-6,0.0,0.0
+0,1,0.1,2E-6,1.0,0.1
+</Segment1>
+"""
+    parsed = parse_par_bytes(raw, "real-format.par")
+    assert len(parsed.raw_data) == 2
+    assert "0" not in parsed.raw_data.columns
+    assert parsed.raw_data["segment_number"].tolist() == [0, 0]

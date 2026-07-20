@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import hmac
-import json
 import os
-import re
 from dataclasses import asdict
 from typing import Any
 
@@ -28,19 +26,17 @@ from core.cv_analysis import (
     preprocess_cv,
     transform_scan_rate,
 )
-from core.cycle_detection import annotate_cycles, cycle_options, select_cycles
+from core.cycle_detection import annotate_cycles, select_cycles
 from core.exporters import (
     analysis_zip,
     figure_html,
     processed_csv,
     regression_csv,
-    settings_json,
     summary_csv,
 )
-from core.par_parser import ParParseError, metadata_value, parse_par_bytes
+from core.par_parser import metadata_value, parse_par_bytes
 from core.regression import (
     aggregate_replicates,
-    apply_blank_correction,
     linear_regression,
     regression_confidence_band,
 )
@@ -98,18 +94,10 @@ def initialize_state() -> None:
         "uploader_version": 0,
         "analysis_mode": "Concentration series",
         "analysis_outputs": None,
-        "restored_settings_name": None,
-        "pending_restore": None,
-        "restore_flash": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-
-
-def filename_concentration_hint(file_name: str) -> str:
-    match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(mM|uM|µM|nM|M|ppm)\b", file_name, re.IGNORECASE)
-    return f"{match.group(1)} {match.group(2)}" if match else ""
 
 
 def default_input(parsed: CVFileData) -> FileInput:
@@ -167,116 +155,6 @@ def reset_all() -> None:
     st.session_state.dismissed_ids = set()
     st.session_state.analysis_outputs = None
     st.session_state.uploader_version += 1
-
-
-def restore_settings(payload: dict[str, Any]) -> int:
-    """Restore manual inputs by content hash first, then by file name."""
-
-    restored = 0
-    if payload.get("analysis_mode") in ("Concentration series", "Scan-rate series"):
-        st.session_state.analysis_mode = payload["analysis_mode"]
-    saved_files = payload.get("files", [])
-    for file_id, parsed in st.session_state.parsed_files.items():
-        match = next((saved for saved in saved_files if saved.get("file_hash") == parsed.file_hash), None)
-        if match is None:
-            match = next((saved for saved in saved_files if saved.get("file_name") == parsed.file_name), None)
-        if not match:
-            continue
-        current = st.session_state.file_inputs[file_id]
-        for key in (
-            "use",
-            "concentration",
-            "concentration_unit",
-            "scan_rate_V_s",
-            "cycle_selection",
-            "include_in_regression",
-        ):
-            if key in match:
-                current[key] = match[key]
-        restored += 1
-    return restored
-
-
-def apply_pending_restore() -> None:
-    """Apply restored widget values before those widgets are instantiated."""
-
-    payload = st.session_state.get("pending_restore")
-    if not payload:
-        return
-    restored = restore_settings(payload)
-    direct_keys = {
-        "current_unit": "current_unit_setting",
-        "response": "response_setting",
-        "last_n": "last_n_setting",
-        "fixed_potential": "fixed_potential_setting",
-        "anodic_sweep": "anodic_peak_sweep",
-        "cathodic_sweep": "cathodic_peak_sweep",
-        "other_sweep": "other_sweep_setting",
-        "smoothing": "smoothing_setting",
-        "smooth_window": "smooth_window_setting",
-        "smooth_order": "smooth_order_setting",
-        "smooth_peak": "smooth_peak_setting",
-        "smooth_plot": "smooth_plot_setting",
-        "baseline": "baseline_setting",
-        "baseline_order": "baseline_order_setting",
-        "blank_correction": "blank_mode_setting",
-        "regression_type": "regression_type_setting",
-        "replicate_mode": "replicate_mode_setting",
-        "confidence_interval": "confidence_interval_setting",
-        "significant_digits": "significant_digits_setting",
-        "scan_x": "scan_x_setting",
-        "concentration_x_unit": "concentration_x_unit_setting",
-        "custom_concentration_unit": "custom_concentration_unit_setting",
-        "plot_trace": "plot_trace_setting",
-        "show_legend": "show_legend_setting",
-        "show_grid": "show_grid_setting",
-        "show_zero_line": "show_zero_line_setting",
-    }
-    for saved_key, widget_key in direct_keys.items():
-        if saved_key in payload:
-            st.session_state[widget_key] = payload[saved_key]
-    for saved_key, start_key, end_key in (
-        ("anodic_window", "anodic_start", "anodic_end"),
-        ("cathodic_window", "cathodic_start", "cathodic_end"),
-        ("interval", "interval_start_setting", "interval_end_setting"),
-        ("x_range", "x_min_setting", "x_max_setting"),
-    ):
-        value = payload.get(saved_key)
-        if isinstance(value, (list, tuple)) and len(value) == 2:
-            st.session_state[start_key], st.session_state[end_key] = value
-    regions = payload.get("baseline_regions")
-    if regions:
-        st.session_state["baseline_region_text_setting"] = ", ".join(
-            f"{start}:{end}" for start, end in regions
-        )
-    current_unit = str(payload.get("current_unit", "µA"))
-    manual_blank_A = payload.get("manual_blank_A")
-    if manual_blank_A is not None:
-        factor = 1.0 if payload.get("response") == "Integrated charge" else CURRENT_UNIT_FACTORS.get(current_unit, 1.0)
-        st.session_state["manual_blank_display_setting"] = float(manual_blank_A) * factor
-    blank_ids = set(payload.get("blank_file_ids", []))
-    st.session_state["blank_files_setting"] = [
-        f"{parsed.file_name} · {parsed.file_hash[:8]}"
-        for file_id, parsed in st.session_state.parsed_files.items()
-        if file_id in blank_ids
-    ]
-    st.session_state["use_x_range_setting"] = payload.get("x_range") is not None
-    st.session_state.pending_restore = None
-    st.session_state.restore_flash = restored
-
-
-def build_settings(snapshot: dict[str, Any]) -> dict[str, Any]:
-    files = []
-    for file_id, parsed in st.session_state.parsed_files.items():
-        entry = dict(st.session_state.file_inputs[file_id])
-        entry.update(file_id=file_id, file_name=parsed.file_name, file_hash=parsed.file_hash)
-        files.append(entry)
-    return {
-        "schema_version": 1,
-        "analysis_mode": st.session_state.analysis_mode,
-        "files": files,
-        **snapshot,
-    }
 
 
 def valid_window(start: float | None, end: float | None) -> tuple[float, float] | None:
@@ -397,7 +275,12 @@ def create_cv_figure(
                 ),
             )
         )
-    markers = summary.dropna(subset=["peak_potential_V", "corrected_peak_current_A"])
+    marker_columns = {"peak_potential_V", "corrected_peak_current_A", "file_name", "peak_type"}
+    markers = (
+        summary.dropna(subset=["peak_potential_V", "corrected_peak_current_A"])
+        if marker_columns.issubset(summary.columns)
+        else pd.DataFrame()
+    )
     if not markers.empty:
         figure.add_trace(
             go.Scatter(
@@ -685,7 +568,6 @@ def run_full_analysis(settings: dict[str, Any]) -> dict[str, Any]:
 
 require_authentication()
 initialize_state()
-apply_pending_restore()
 
 st.title("CV Calibration & Scan-Rate Analyzer")
 st.caption("Upload VersaStudio .par files, inspect CV curves, extract electrochemical responses, and generate calibration or scan-rate plots.")
@@ -714,19 +596,6 @@ with action_column:
         reset_all()
         st.rerun()
 process_uploads(uploads)
-
-settings_upload = st.file_uploader("Restore analysis settings (JSON)", type=["json"], key="settings_upload")
-if settings_upload is not None and st.button("Apply restored settings"):
-    try:
-        payload = json.loads(settings_upload.getvalue().decode("utf-8-sig"))
-        st.session_state.pending_restore = payload
-        st.session_state.restored_settings_name = settings_upload.name
-        st.rerun()
-    except (ValueError, UnicodeError, json.JSONDecodeError) as error:
-        st.error(f"Could not restore settings: {error}")
-if st.session_state.restore_flash is not None:
-    st.success(f"Restored analysis settings and manual inputs for {st.session_state.restore_flash} matching file(s).")
-    st.session_state.restore_flash = None
 
 for error in st.session_state.parse_errors[-10:]:
     st.error(error)
@@ -766,7 +635,6 @@ for file_id, parsed in st.session_state.parsed_files.items():
         "File ID": file_id,
         "Use": inputs["use"],
         "File name": parsed.file_name,
-        "Filename hint": filename_concentration_hint(parsed.file_name),
     }
     if st.session_state.analysis_mode == "Concentration series":
         row["Concentration"] = inputs["concentration"]
@@ -783,7 +651,6 @@ columns: dict[str, Any] = {
     "File ID": None,
     "Use": st.column_config.CheckboxColumn(),
     "File name": st.column_config.TextColumn(disabled=True),
-    "Filename hint": st.column_config.TextColumn(disabled=True, help="Reference only; never copied into Concentration."),
     f"Scan rate ({scan_rate_display_unit})": st.column_config.NumberColumn(min_value=0.0, format="%.8g"),
     "Cycle": st.column_config.SelectboxColumn(options=all_cycle_options),
     "Include in regression": st.column_config.CheckboxColumn(),
@@ -809,20 +676,19 @@ if st.button("Apply inputs", type="primary"):
     st.session_state.analysis_outputs = None
     st.success("Inputs applied. Uploaded files were not reparsed.")
 
-with st.expander("Parsing details"):
-    for parsed in st.session_state.parsed_files.values():
-        scan_rate = metadata_value(parsed.metadata, "Scan Rate (V/s)")
-        st.write(f"**{parsed.file_name}** — {len(parsed.raw_data):,} rows, {parsed.raw_data['segment_number'].nunique()} segment(s), scan rate `{scan_rate}` V/s, encoding `{parsed.encoding}`")
-        for warning in parsed.warnings:
-            st.warning(warning)
-
 st.subheader("3. Analysis settings")
-general_tab, preprocess_tab, regression_tab, plot_tab = st.tabs(["Response", "Preprocessing", "Regression", "Plot"])
+general_tab, plot_tab = st.tabs(["Response", "Plot"])
 with general_tab:
     if st.session_state.analysis_mode == "Concentration series":
-        response_options = ["Anodic peak current, Ipa", "Cathodic peak current, Ipc", "Both", "abs(Ipa)", "abs(Ipc)", "Ipa - Ipc", "Ipa - abs(Ipc)", "Fixed-potential current", "Baseline-corrected fixed-potential current", "Potential interval mean current", "Integrated charge"]
+        response_options = ["Anodic peak current, Ipa", "Cathodic peak current, Ipc", "Both", "abs(Ipa)", "abs(Ipc)", "Ipa - Ipc", "Ipa - abs(Ipc)", "Fixed-potential current", "Potential interval mean current", "Integrated charge"]
+        scan_x = "scan rate, v"
     else:
         response_options = ["Anodic peak current, Ipa", "abs(Ipa)", "Cathodic peak current, Ipc", "abs(Ipc)", "log10(abs(Ipa))", "log10(abs(Ipc))", "Fixed-potential current", "Integrated charge"]
+        scan_x = st.selectbox(
+            "Scan-rate x axis",
+            ["scan rate, v", "square root of scan rate, sqrt(v)", "logarithm of scan rate, log10(v)"],
+            key="scan_x_setting",
+        )
     response = st.selectbox("Electrochemical response", response_options, key="response_setting")
     st.caption("Set a peak-search potential window before running peak analysis.")
     anodic_column, cathodic_column = st.columns(2)
@@ -844,51 +710,7 @@ with general_tab:
     interval_start = i1.number_input("Interval start / V", value=None, key="interval_start_setting")
     interval_end = i2.number_input("Interval end / V", value=None, key="interval_end_setting")
     last_n = st.number_input("N for Last N cycles average", min_value=1, value=2, step=1, key="last_n_setting")
-with preprocess_tab:
-    smoothing = st.selectbox("Smoothing", ["None", "Savitzky–Golay filter"], key="smoothing_setting")
-    s1, s2 = st.columns(2)
-    smooth_window = s1.number_input("Window length", min_value=3, value=11, step=2, key="smooth_window_setting")
-    smooth_order = s2.number_input("Polynomial order", min_value=1, value=3, step=1, key="smooth_order_setting")
-    smooth_peak = st.checkbox("Apply smoothing to peak search", value=False, key="smooth_peak_setting")
-    smooth_plot = st.checkbox("Apply smoothing to plot", value=False, key="smooth_plot_setting")
-    baseline = st.selectbox("Baseline correction", ["None", "Linear baseline", "Polynomial baseline", "Local baseline around peak", "Manual baseline regions"], key="baseline_setting")
-    baseline_order = st.number_input("Baseline polynomial order", min_value=1, max_value=8, value=2, key="baseline_order_setting")
-    baseline_region_text = st.text_input("Manual baseline regions", placeholder="-0.20:-0.10, 0.35:0.45", key="baseline_region_text_setting")
-    baseline_regions: list[tuple[float, float]] = []
-    if baseline_region_text:
-        try:
-            parsed_regions = [tuple(map(float, region.split(":"))) for region in baseline_region_text.split(",")]
-            if any(len(region) != 2 for region in parsed_regions):
-                raise ValueError("Each region requires one start and one end.")
-            baseline_regions = parsed_regions  # type: ignore[assignment]
-        except ValueError:
-            st.error("Baseline regions must use start:end pairs separated by commas.")
-with regression_tab:
-    if st.session_state.analysis_mode == "Concentration series":
-        concentration_x_unit = st.selectbox("Calibration x unit", ["M", "mM", "µM", "nM"], index=1, key="concentration_x_unit_setting")
-        custom_concentration_unit = st.text_input("Custom concentration unit label", value="custom", key="custom_concentration_unit_setting")
-        blank_mode = st.selectbox("Blank correction", ["No blank correction", "Use concentration 0 data", "Use selected files", "Enter blank current manually"], key="blank_mode_setting")
-        blank_labels = list(remove_names)
-        blank_selected_labels = st.multiselect("Blank files", blank_labels, disabled=blank_mode != "Use selected files", key="blank_files_setting")
-        blank_display_unit = "C" if response == "Integrated charge" else current_unit
-        manual_blank_display = st.number_input(f"Manual blank response / {blank_display_unit}", value=None, disabled=blank_mode != "Enter blank current manually", key="manual_blank_display_setting")
-    else:
-        concentration_x_unit = "mM"
-        custom_concentration_unit = "custom"
-        blank_mode = "No blank correction"
-        blank_selected_labels = []
-        manual_blank_display = None
-    scan_x = st.selectbox("Scan-rate x axis", ["scan rate, v", "square root of scan rate, sqrt(v)", "logarithm of scan rate, log10(v)"], disabled=st.session_state.analysis_mode != "Scan-rate series", key="scan_x_setting")
-    replicate_mode = st.selectbox("Replicates", ["Show individual points", "Mean only", "Mean ± standard deviation", "Mean ± standard error"], key="replicate_mode_setting")
-    regression_type = st.selectbox("Regression", ["Ordinary least squares", "Linear regression through origin"], key="regression_type_setting")
-    confidence_interval = st.checkbox("Show 95% confidence interval", value=False, key="confidence_interval_setting")
-    significant_digits = st.slider("Significant digits", 2, 8, 4, key="significant_digits_setting")
-    use_x_range = st.checkbox("Limit regression to an x range", key="use_x_range_setting")
-    xr1, xr2 = st.columns(2)
-    x_min = xr1.number_input("Minimum x", value=None, disabled=not use_x_range, key="x_min_setting")
-    x_max = xr2.number_input("Maximum x", value=None, disabled=not use_x_range, key="x_max_setting")
 with plot_tab:
-    plot_trace = st.selectbox("CV current trace", ["Raw", "Smoothed", "Baseline-corrected"], key="plot_trace_setting")
     show_legend = st.checkbox("Legend", value=True, key="show_legend_setting")
     show_grid = st.checkbox("Grid", value=True, key="show_grid_setting")
     show_zero_line = st.checkbox("Zero line", value=True, key="show_zero_line_setting")
@@ -896,10 +718,6 @@ with plot_tab:
 anodic_window = valid_window(anodic_start, anodic_end)
 cathodic_window = valid_window(cathodic_start, cathodic_end)
 interval = valid_window(interval_start, interval_end)
-x_range = valid_window(x_min, x_max) if use_x_range else None
-blank_file_ids = {remove_names[label] for label in blank_selected_labels}
-manual_blank_factor = 1.0 if response == "Integrated charge" else CURRENT_UNIT_FACTORS[current_unit]
-manual_blank = float(manual_blank_display) / manual_blank_factor if manual_blank_display is not None else None
 snapshot = {
     "analysis_mode": st.session_state.analysis_mode,
     "current_unit": current_unit,
@@ -912,26 +730,23 @@ snapshot = {
     "anodic_sweep": anodic_sweep,
     "cathodic_sweep": cathodic_sweep,
     "other_sweep": other_sweep,
-    "smoothing": smoothing,
-    "smooth_window": int(smooth_window),
-    "smooth_order": int(smooth_order),
-    "smooth_peak": smooth_peak,
-    "smooth_plot": smooth_plot,
-    "baseline": baseline,
-    "baseline_order": int(baseline_order),
-    "baseline_regions": baseline_regions,
-    "blank_correction": blank_mode,
-    "blank_file_ids": sorted(blank_file_ids),
-    "manual_blank_A": manual_blank,
-    "regression_type": regression_type,
-    "replicate_mode": replicate_mode,
-    "confidence_interval": confidence_interval,
-    "significant_digits": significant_digits,
-    "x_range": x_range,
+    "smoothing": "None",
+    "smooth_window": 11,
+    "smooth_order": 3,
+    "smooth_peak": False,
+    "smooth_plot": False,
+    "baseline": "None",
+    "baseline_order": 2,
+    "baseline_regions": [],
+    "regression_type": "Ordinary least squares",
+    "replicate_mode": "Show individual points",
+    "confidence_interval": False,
+    "significant_digits": 4,
+    "x_range": None,
     "scan_x": scan_x,
-    "concentration_x_unit": concentration_x_unit,
-    "custom_concentration_unit": custom_concentration_unit,
-    "plot_trace": plot_trace,
+    "concentration_x_unit": "mM",
+    "custom_concentration_unit": "custom",
+    "plot_trace": "Raw",
     "show_legend": show_legend,
     "show_grid": show_grid,
     "show_zero_line": show_zero_line,
@@ -939,37 +754,13 @@ snapshot = {
 
 if st.button("Run analysis", type="primary", width="stretch"):
     try:
-        outputs = run_full_analysis(snapshot)
-        if st.session_state.analysis_mode == "Concentration series" and not outputs["summary"].empty:
-            outputs["summary"], blank_value = apply_blank_correction(
-                outputs["summary"], blank_mode,
-                response_column="response", blank_file_ids=blank_file_ids, manual_blank=manual_blank,
-            )
-            if response == "Integrated charge":
-                outputs["summary"]["display_peak_current"] = outputs["summary"]["response"]
-            else:
-                outputs["summary"]["display_peak_current"] = convert_current(outputs["summary"]["response"], current_unit)
-            outputs["summary"]["blank_corrected_response"] = outputs["summary"]["response"]
-            if blank_value:
-                # Rebuild regression and plots with corrected responses.
-                points, extra_warnings, x_variable, units = prepare_regression_points(outputs["summary"], snapshot)
-                outputs["warnings"].extend(extra_warnings)
-                outputs["points"] = points
-                outputs["summary"].loc[points.index, "included_in_regression"] = points["included"].astype(bool)
-                x_unit, y_unit = units.split("|", 1)
-                included = points[points["included"]]
-                fit = aggregate_replicates(included, mode=replicate_mode) if not included.empty else included
-                outputs["regression"] = linear_regression(fit["x"], fit["y"], through_origin=regression_type == "Linear regression through origin", analysis_mode=st.session_state.analysis_mode, x_variable=x_variable, x_unit=x_unit, y_variable=response, y_unit=y_unit, significant_digits=significant_digits) if len(fit) >= 2 and fit["x"].nunique() >= 2 else None
-                outputs["analysis_figure"] = create_analysis_figure(points, fit, outputs["regression"], snapshot, x_variable, x_unit, y_unit)
-        outputs["saved_settings"] = build_settings(snapshot)
-        st.session_state.analysis_outputs = outputs
+        st.session_state.analysis_outputs = run_full_analysis(snapshot)
     except (ValueError, TypeError) as error:
         st.error(f"Analysis could not be completed: {error}")
 
 outputs = st.session_state.analysis_outputs
 if outputs is None:
     st.info("Apply the file inputs, enter the required response settings, and run the analysis.")
-    st.download_button("Download current settings JSON", settings_json(build_settings(snapshot)), "analysis_settings.json", "application/json")
     st.stop()
 
 for warning in outputs["warnings"]:
@@ -1003,7 +794,7 @@ else:
 if not processed.empty:
     cv_figure = create_cv_figure(
         processed, summary, current_unit, show_legend, show_grid, show_zero_line,
-        plot_trace, anodic_window, cathodic_window, highlight_file,
+        "Raw", anodic_window, cathodic_window, highlight_file,
     )
     st.plotly_chart(cv_figure, width="stretch", config={"displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "cv_overlay"}})
 else:
@@ -1014,6 +805,7 @@ analysis_figure = outputs["analysis_figure"]
 if analysis_figure is not None:
     st.plotly_chart(analysis_figure, width="stretch", config={"displaylogo": False})
 if regression_result is not None:
+    significant_digits = 4
     metrics = st.columns(5)
     metrics[0].metric("Slope", f"{regression_result.slope:.{significant_digits}g}")
     metrics[1].metric("Intercept", f"{regression_result.intercept:.{significant_digits}g}")
@@ -1024,16 +816,14 @@ if regression_result is not None:
     st.dataframe(pd.DataFrame([asdict(regression_result)]).drop(columns=["included_indices"]), hide_index=True, width="stretch")
 
 st.subheader("5. Downloads")
-saved_settings = outputs.get("saved_settings", build_settings(snapshot))
-download_columns = st.columns(4)
+download_columns = st.columns(3)
 download_columns[0].download_button("Summary CSV", summary_csv(summary), "summary.csv", "text/csv", width="stretch")
 download_columns[1].download_button("Processed CV CSV", processed_csv(processed), "processed_cv_data.csv", "text/csv", width="stretch")
 download_columns[2].download_button("Regression CSV", regression_csv(regression_result), "regression_results.csv", "text/csv", width="stretch")
-download_columns[3].download_button("Settings JSON", settings_json(saved_settings), "analysis_settings.json", "application/json", width="stretch")
 html_columns = st.columns(3)
 html_columns[0].download_button("CV plot HTML", figure_html(cv_figure), "cv_overlay.html", "text/html", width="stretch")
 html_columns[1].download_button("Analysis plot HTML", figure_html(analysis_figure), "calibration_plot.html", "text/html", width="stretch")
-zip_payload = analysis_zip(summary, processed, regression_result, cv_figure, analysis_figure, saved_settings)
+zip_payload = analysis_zip(summary, processed, regression_result, cv_figure, analysis_figure)
 html_columns[2].download_button("Complete ZIP", zip_payload, "cv_analysis_results.zip", "application/zip", width="stretch")
 with st.expander("Prepare static plot images (PNG/SVG)"):
     st.caption("Static export uses Kaleido and may take a moment on the server. Plotly's camera button is also available above.")
